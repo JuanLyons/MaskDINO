@@ -9,7 +9,8 @@ MaskDINO Training Script based on Mask2Former.
 try:
     from shapely.errors import ShapelyDeprecationWarning
     import warnings
-    warnings.filterwarnings('ignore', category=ShapelyDeprecationWarning)
+
+    warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
 except:
     pass
 
@@ -27,6 +28,7 @@ import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog, build_detection_train_loader
+
 
 from detectron2.evaluation import (
     CityscapesInstanceEvaluator,
@@ -61,15 +63,126 @@ from detectron2.engine import (
     launch,
     create_ddp_model,
     AMPTrainer,
-    SimpleTrainer
+    SimpleTrainer,
 )
+from detectron2.engine.hooks import BestCheckpointer
 import weakref
+
+import json
+from maskdino.data.datasets.register_coco_dataset import register_coco_instances
+
+
+def load_json(path):
+    with open(path, "r") as f:
+        data = json.load(f)
+    return data
+
+
+def metadata_from_json(json_file):
+    cats_data = sorted(
+        load_json(json_file)["categories"],
+        key=lambda x: x["id"],
+    )
+    metadata = {
+        "thing_dataset_id_to_contiguous_id": {
+            cat["id"]: c_id for c_id, cat in enumerate(cats_data)
+        },
+        "thing_classes": [cat["name"] for cat in cats_data],
+    }
+
+    return metadata
+
+
+def register_surgical_dataset(cfg):
+    dataset_name = cfg.DATASETS.TRAIN[0].split("_")[0]
+    dataset_path = "/media/SSD1/scanar/endovis/LEMIS-challenge/region_proposals/data"
+
+    if dataset_name == "cvs-challenge":
+        dataset_path = os.path.join(dataset_path, "sages")
+        image_root = os.path.join(dataset_path, "frames")
+        annotation_path = os.path.join(dataset_path, "annotations")
+        metadata = metadata_from_json(
+            os.path.join(
+                dataset_path,
+                "annotations",
+                "fold1",
+                "train_annotation_coco_polygon.json",
+            )
+        )
+        fold_lt = ["fold1", "fold2"]
+        split_lt = ["train", "test"]
+
+        for fold in fold_lt:
+            for split in split_lt:
+                json_file = os.path.join(
+                    dataset_path,
+                    "annotations",
+                    fold,
+                    f"{split}_annotation_coco_polygon.json",
+                )
+                register_coco_instances(
+                    f"cvs-challenge_{split}_{fold}", metadata, json_file, image_root
+                )
+
+        # TODO para el futuro
+        # for split in split_lt:
+        #     json_file = os.path.join(dataset_path, 'annotations', f'{split}_annotation_coco_polygon.json')
+        #     image_root = os.path.join(dataset_path, 'frames')
+        #     register_coco_instances(f'cvs-challenge_{split}', metadata, json_file, image_root)
+
+    elif dataset_name == "endoscapes":
+        dataset_path = os.path.join(dataset_path, "endoscapes")
+        image_root = os.path.join(dataset_path, "frames")
+        annotation_path = os.path.join(dataset_path, "annotations")
+        metadata = metadata_from_json(
+            os.path.join(
+                dataset_path,
+                "annotations",
+                "train_annotation_coco_polygon.json",
+            )
+        )
+        split_lt = ["train", "val", "test"]
+        for split in split_lt:
+            json_file = os.path.join(
+                dataset_path,
+                "annotations",
+                f"{split}_annotation_coco_polygon.json",
+            )
+            register_coco_instances(
+                f"endoscapes_{split}", metadata, json_file, image_root
+            )
+
+    elif dataset_name == "endoscapes-cutted":
+        dataset_path = os.path.join(dataset_path, "endoscapes")
+        image_root = os.path.join(dataset_path, "frames")
+        annotation_path = os.path.join(dataset_path, "annotations")
+        metadata = metadata_from_json(
+            os.path.join(
+                dataset_path,
+                "annotations",
+                "train_annotation_coco_polygon.json",
+            )
+        )
+        split_lt = ["train", "val", "test"]
+        for split in split_lt:
+            json_file = os.path.join(
+                dataset_path,
+                "annotations",
+                f"{split}_annotation_coco_polygon.json",
+            )
+            register_coco_instances(
+                f"endoscapes_{split}", metadata, json_file, image_root
+            )
+
+    else:
+        print(f"Unrecognized surgical dataset {dataset_name}")
 
 
 class Trainer(DefaultTrainer):
     """
     Extension of the Trainer class adapted to MaskFormer.
     """
+
     def __init__(self, cfg):
         super(DefaultTrainer, self).__init__()
         logger = logging.getLogger("detectron2")
@@ -91,7 +204,7 @@ class Trainer(DefaultTrainer):
 
         # add model EMA
         kwargs = {
-            'trainer': weakref.proxy(self),
+            "trainer": weakref.proxy(self),
         }
         # kwargs.update(model_ema.may_get_ema_checkpointer(cfg, model)) TODO: release ema training for large models
         self.checkpointer = DetectionCheckpointer(
@@ -105,14 +218,24 @@ class Trainer(DefaultTrainer):
         self.cfg = cfg
 
         self.register_hooks(self.build_hooks())
-        # TODO: release model conversion checkpointer from DINO to MaskDINO
-        self.checkpointer = DetectionCheckpointer(
-            # Assume you want to save checkpoints together with logs/statistics
-            model,
-            cfg.OUTPUT_DIR,
-            **kwargs,
+
+    def build_hooks(self):
+        hooks_list = super().build_hooks()
+
+        for h in hooks_list:
+            if isinstance(h, hooks.PeriodicCheckpointer):
+                hooks_list.remove(h)
+                break
+
+        hooks_list.append(
+            BestCheckpointer(
+                self.cfg.TEST.EVAL_PERIOD,
+                self.checkpointer,
+                val_metric="segm/AP50",
+            )
         )
-        # TODO: release GPU cluster submit scripts based on submitit for multi-node training
+
+        return hooks_list
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
@@ -147,17 +270,41 @@ class Trainer(DefaultTrainer):
             "mapillary_vistas_panoptic_seg",
         ]:
             if cfg.MODEL.MaskDINO.TEST.PANOPTIC_ON:
-                evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
+                evaluator_list.append(
+                    COCOPanopticEvaluator(dataset_name, output_folder)
+                )
         # COCO
-        if evaluator_type == "coco_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.INSTANCE_ON:
+        if (
+            evaluator_type == "coco_panoptic_seg"
+            and cfg.MODEL.MaskDINO.TEST.INSTANCE_ON
+        ):
             evaluator_list.append(COCOEvaluator(dataset_name, output_dir=output_folder))
-        if evaluator_type == "coco_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.SEMANTIC_ON:
-            evaluator_list.append(SemSegEvaluator(dataset_name, distributed=True, output_dir=output_folder))
+        if (
+            evaluator_type == "coco_panoptic_seg"
+            and cfg.MODEL.MaskDINO.TEST.SEMANTIC_ON
+        ):
+            evaluator_list.append(
+                SemSegEvaluator(
+                    dataset_name, distributed=True, output_dir=output_folder
+                )
+            )
         # Mapillary Vistas
-        if evaluator_type == "mapillary_vistas_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.INSTANCE_ON:
-            evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder))
-        if evaluator_type == "mapillary_vistas_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.SEMANTIC_ON:
-            evaluator_list.append(SemSegEvaluator(dataset_name, distributed=True, output_dir=output_folder))
+        if (
+            evaluator_type == "mapillary_vistas_panoptic_seg"
+            and cfg.MODEL.MaskDINO.TEST.INSTANCE_ON
+        ):
+            evaluator_list.append(
+                InstanceSegEvaluator(dataset_name, output_dir=output_folder)
+            )
+        if (
+            evaluator_type == "mapillary_vistas_panoptic_seg"
+            and cfg.MODEL.MaskDINO.TEST.SEMANTIC_ON
+        ):
+            evaluator_list.append(
+                SemSegEvaluator(
+                    dataset_name, distributed=True, output_dir=output_folder
+                )
+            )
         # Cityscapes
         if evaluator_type == "cityscapes_instance":
             assert (
@@ -181,8 +328,13 @@ class Trainer(DefaultTrainer):
                 ), "CityscapesEvaluator currently do not work with multiple machines."
                 evaluator_list.append(CityscapesInstanceEvaluator(dataset_name))
         # ADE20K
-        if evaluator_type == "ade20k_panoptic_seg" and cfg.MODEL.MaskDINO.TEST.INSTANCE_ON:
-            evaluator_list.append(InstanceSegEvaluator(dataset_name, output_dir=output_folder))
+        if (
+            evaluator_type == "ade20k_panoptic_seg"
+            and cfg.MODEL.MaskDINO.TEST.INSTANCE_ON
+        ):
+            evaluator_list.append(
+                InstanceSegEvaluator(dataset_name, output_dir=output_folder)
+            )
         # LVIS
         if evaluator_type == "lvis":
             return LVISEvaluator(dataset_name, output_dir=output_folder)
@@ -262,7 +414,9 @@ class Trainer(DefaultTrainer):
 
                 hyperparams = copy.copy(defaults)
                 if "backbone" in module_name:
-                    hyperparams["lr"] = hyperparams["lr"] * cfg.SOLVER.BACKBONE_MULTIPLIER
+                    hyperparams["lr"] = (
+                        hyperparams["lr"] * cfg.SOLVER.BACKBONE_MULTIPLIER
+                    )
                 if (
                     "relative_position_bias_table" in module_param_name
                     or "absolute_pos_embed" in module_param_name
@@ -286,7 +440,9 @@ class Trainer(DefaultTrainer):
 
             class FullModelGradientClippingOptimizer(optim):
                 def step(self, closure=None):
-                    all_params = itertools.chain(*[x["params"] for x in self.param_groups])
+                    all_params = itertools.chain(
+                        *[x["params"] for x in self.param_groups]
+                    )
                     torch.nn.utils.clip_grad_norm_(all_params, clip_norm_val)
                     super().step(closure=closure)
 
@@ -336,12 +492,15 @@ def setup(args):
     cfg.merge_from_list(args.opts)
     cfg.freeze()
     default_setup(cfg, args)
-    setup_logger(output=cfg.OUTPUT_DIR, distributed_rank=comm.get_rank(), name="maskdino")
+    setup_logger(
+        output=cfg.OUTPUT_DIR, distributed_rank=comm.get_rank(), name="maskdino"
+    )
     return cfg
 
 
 def main(args):
     cfg = setup(args)
+    register_surgical_dataset(cfg)
     print("Command cfg:", cfg)
     if args.eval_only:
         model = Trainer.build_model(cfg)
@@ -349,9 +508,7 @@ def main(args):
             cfg.MODEL.WEIGHTS, resume=args.resume
         )
         checkpointer = DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR)
-        checkpointer.resume_or_load(
-            cfg.MODEL.WEIGHTS, resume=args.resume
-        )
+        checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
         res = Trainer.test(cfg, model)
         if cfg.TEST.AUG.ENABLED:
             res.update(Trainer.test_with_TTA(cfg, model))
@@ -366,12 +523,12 @@ def main(args):
 
 if __name__ == "__main__":
     parser = default_argument_parser()
-    parser.add_argument('--eval_only', action='store_true')
-    parser.add_argument('--EVAL_FLAG', type=int, default=1)
+    parser.add_argument("--eval_only", action="store_true")
+    parser.add_argument("--EVAL_FLAG", type=int, default=1)
     args = parser.parse_args()
     # random port
     port = random.randint(1000, 20000)
-    args.dist_url = 'tcp://127.0.0.1:' + str(port)
+    args.dist_url = "tcp://127.0.0.1:" + str(port)
     print("Command Line Args:", args)
     print("pwd:", os.getcwd())
     launch(
