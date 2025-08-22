@@ -3,6 +3,8 @@ outputs*
 instant_test_output
 inference_test_output
 
+# data
+demo/input_dir
 
 *.png
 *.json
