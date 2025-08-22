@@ -27,22 +27,19 @@ TORCH_CUDA_ARCH_LIST='8.0' FORCE_CUDA=1 python setup.py build install
 
 ### Example conda environment setup
 ```bash
-conda create --name maskdino python=3.8 -y
+conda create --name maskdino python=3.12 -y
 conda activate maskdino
-conda install pytorch==1.9.0 torchvision==0.10.0 cudatoolkit=11.1 -c pytorch -c nvidia
+conda install pytorch==2.4.1 torchvision==0.19.1 pytorch-cuda=12.4 -c pytorch -c nvidia
 pip install -U opencv-python
 
 # under your working directory
-git clone git@github.com:facebookresearch/detectron2.git
-cd detectron2
-pip install -e .
+python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
 pip install git+https://github.com/cocodataset/panopticapi.git
 pip install git+https://github.com/mcordts/cityscapesScripts.git
 
-cd ..
-git clone git@github.com:facebookresearch/MaskDINO.git
 cd MaskDINO
 pip install -r requirements.txt
 cd maskdino/modeling/pixel_decoder/ops
 sh make.sh
+cd ../../../..
 ```
