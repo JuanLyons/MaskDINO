@@ -26,6 +26,6 @@ if __name__ == "__main__":
 
     # Run evaluation
     evaluate_coco(
-        "/home/jclyons/endovis/challenge_2025/MaskDINO/demo/input_dir/metadata/test_frames_C.json",
+        "/media/SSD3/leoshared/Dataset/cvs_challenge25_validation/data/annotations/annotations_C.json",
         preds_dict,
     )

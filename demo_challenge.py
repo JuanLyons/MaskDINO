@@ -5,16 +5,6 @@ import glob
 import os
 import pycocotools.mask as mask_util
 
-# fmt: off
-import sys
-sys.path.insert(1, os.path.join(sys.path[0], '..'))
-# fmt: on
-
-import tempfile
-import time
-import warnings
-
-import cv2
 import numpy as np
 from tqdm import tqdm
 import json
@@ -68,56 +58,33 @@ def write_json(path, data):
         json.dump(data, f, indent=4)
 
 
-class Demo(object):
-    def __init__(self, cfg):
-        """
-        Args:
-            cfg (CfgNode):
-            instance_mode (ColorMode):
-            parallel (bool): whether to run the model in different processes from visualization.
-                Useful since the visualization logic can be slow.
-        """
-        self.cpu_device = torch.device("cpu")
-
-        self.predictor = DefaultPredictor(cfg)
-
-    def run_on_image(self, image):
-        """
-        Args:
-            image (np.ndarray): an image of shape (H, W, C) (in BGR order).
-                This is the format used by OpenCV.
-        Returns:
-            predictions (dict): the output of the model.
-        """
-        predictions = self.predictor(image)
-
-        return predictions
-
-
 class Predictions(object):
-    def __init__(self, categories):
-        self.predictions_json = {"images": [], "annotations": [], "categories": []}
-        self.update_categories(categories)
+    def __init__(self):
+        self.predictions_json = {
+            "images": [],
+            "annotations": [],
+            "categories": self.get_categories(),
+        }
         self.annotation_id = 1
 
-    def update_categories(self, categories):
-        for category in categories:
-            category_id = category["id"]
-            category_name = category["name"]
-            category_dict = {"id": category_id, "name": category_name}
-            self.predictions_json["categories"].append(category_dict)
+    def get_categories(self):
+        categories = [
+            {"id": 1, "name": "cystic_plate"},
+            {"id": 2, "name": "calot_triangle"},
+            {"id": 3, "name": "cystic_artery"},
+            {"id": 4, "name": "cystic_duct"},
+            {"id": 5, "name": "gallbladder"},
+            {"id": 6, "name": "tool"},
+        ]
+        return categories
 
     def update_images(self, images):
         for image in images:
-            file_name = image["file_name"]
-            height = image["height"]
-            width = image["width"]
-            image_id = image["id"]
             image_dict = {
-                "file_name": file_name,
-                "height": height,
-                "width": width,
-                "id": image_id,
+                "file_name": image["file_name"],
+                "height": image["height"],
+                "width": image["width"],
+                "id": image["id"],
             }
             self.predictions_json["images"].append(image_dict)
 
@@ -131,7 +98,7 @@ class Predictions(object):
 
             # Get bbox
             x1, y1, x2, y2 = prediction.pred_boxes.tensor.numpy()[0]
-            x, y, w, h = round(x1), round(y1), round(x2 - x1), round(y2 - y1)
+            bbox = [round(x1), round(y1), round(x2 - x1), round(y2 - y1)]
 
             # Get segmentation mask
             mask = prediction.pred_masks[0]
@@ -145,7 +112,7 @@ class Predictions(object):
                 "image_id": image["id"],
                 "height": image["height"],
                 "width": image["width"],
-                "bbox": [x, y, w, h],
+                "bbox": bbox,
                 "category_id": int(prediction.pred_classes.item()) + 1,
                 "score": float(prediction.scores),
                 "segmentation": rle,
@@ -170,11 +137,11 @@ if __name__ == "__main__":
 
     cfg = setup_cfg(args)
 
-    demo = Demo(cfg)
+    predictor = DefaultPredictor(cfg)
 
     json_file = load_json(os.path.join(data_path, "metadata", "test_frames_C.json"))
 
-    predictions = Predictions(json_file["categories"])
+    predictions = Predictions()
     predictions.update_images(json_file["images"])
 
     predictions_path = os.path.join(res_path, "subchallengeC.json")
@@ -183,8 +150,7 @@ if __name__ == "__main__":
         path = os.path.join(data_path, "frames", frame["file_name"])
         # use PIL, to be consistent with evaluation
         img = read_image(path, format="BGR")
-        start_time = time.time()
-        model_predictions = demo.run_on_image(img)
+        model_predictions = predictor(img)
 
         predictions.update_annotations(frame, model_predictions)
 
