@@ -103,8 +103,7 @@ def register_surgical_dataset(cfg):
         annotation_path = os.path.join(dataset_path, "annotations")
         metadata = metadata_from_json(
             os.path.join(
-                dataset_path,
-                "annotations",
+                annotation_path
                 "fold1",
                 "train_annotation_coco_polygon.json",
             )
@@ -115,8 +114,7 @@ def register_surgical_dataset(cfg):
         for fold in fold_lt:
             for split in split_lt:
                 json_file = os.path.join(
-                    dataset_path,
-                    "annotations",
+                    annotation_path,
                     fold,
                     f"{split}_annotation_coco_polygon.json",
                 )
@@ -136,42 +134,58 @@ def register_surgical_dataset(cfg):
         annotation_path = os.path.join(dataset_path, "annotations")
         metadata = metadata_from_json(
             os.path.join(
-                dataset_path,
-                "annotations",
+                annotation_path,
                 "train_annotation_coco_polygon.json",
             )
         )
         split_lt = ["train", "val", "test"]
         for split in split_lt:
             json_file = os.path.join(
-                dataset_path,
-                "annotations",
+                annotation_path,
                 f"{split}_annotation_coco_polygon.json",
             )
             register_coco_instances(
                 f"endoscapes_{split}", metadata, json_file, image_root
             )
 
-    elif dataset_name == "endoscapes-cutted":
-        dataset_path = os.path.join(dataset_path, "endoscapes")
+    elif dataset_name == "cvs-challenge-cutted":
+        dataset_path = os.path.join(dataset_path, "sages_cutmargins")
         image_root = os.path.join(dataset_path, "frames")
         annotation_path = os.path.join(dataset_path, "annotations")
         metadata = metadata_from_json(
             os.path.join(
-                dataset_path,
-                "annotations",
+                annotation_path,
                 "train_annotation_coco_polygon.json",
             )
         )
         split_lt = ["train", "val", "test"]
         for split in split_lt:
             json_file = os.path.join(
-                dataset_path,
-                "annotations",
+                annotation_path,
                 f"{split}_annotation_coco_polygon.json",
             )
             register_coco_instances(
-                f"endoscapes_{split}", metadata, json_file, image_root
+                f"cvs-challenge-cutted_{split}", metadata, json_file, image_root
+            )
+    
+    elif dataset_name == "endoscapes-cutted":
+        dataset_path = os.path.join(dataset_path, "endoscapes")
+        image_root = os.path.join(dataset_path, "frames")
+        annotation_path = os.path.join(dataset_path, "annotations")
+        metadata = metadata_from_json(
+            os.path.join(
+                annotation_path,
+                "train_annotation_coco_polygon.json",
+            )
+        )
+        split_lt = ["train", "val", "test"]
+        for split in split_lt:
+            json_file = os.path.join(
+                annotation_path,
+                f"{split}_annotation_coco_polygon.json",
+            )
+            register_coco_instances(
+                f"endoscapes-cutted_{split}", metadata, json_file, image_root
             )
 
     else:
